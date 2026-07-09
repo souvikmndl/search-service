@@ -1,0 +1,47 @@
+services:
+    postgres:
+        image: postgres:16-alpine
+        container_name: postgres_db
+        environment:
+            POSTGRES_USER: ${DB_USER:-postgres}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+            POSTGRES_DB: ${DB_NAME:-search_service}
+        ports:
+            - "${DB_PORT:-5432}:5432"
+        volumes:
+            - ./pgdata:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-search_service}"]
+            interval: 5s
+            timeout: 5s
+            retries: 10
+        networks:
+            - search_net
+
+    api:
+        build:
+            context: .
+        container_name: search_service_api
+        environment:
+            DB_NAME: ${DB_NAME:-search_service}
+            DB_HOST: postgres_db
+            DB_PORT: 5432
+            DB_USER: ${DB_USER:-postgres}
+            DB_PASSWORD: ${DB_PASSWORD:-secret}
+            SERVER_PORT: ${SERVER_PORT:-3000}
+            LOG_LEVEL: ${LOG_LEVEL:-info}
+            LOG_DIR: ${LOG_DIR:-/var/log/search_service/}
+            LOG_FILE: ${LOG_FILE:-api.log}
+            JWT_SECRET: ${JWT_SECRET:-secret}
+        ports:
+            - "${SERVER_PORT:-3000}:${SERVER_PORT:-3000}"
+        depends_on:
+            postgres:
+                condition: service_healthy
+        restart: unless-stopped
+        networks:
+            - search_net
+
+networks:
+    search_net:
+        driver: bridge

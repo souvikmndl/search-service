@@ -1,0 +1,5 @@
+.git
+pgdata
+.envrc
+Dockerfile
+docker-compose.yaml
