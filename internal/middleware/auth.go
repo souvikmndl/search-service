@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/labstack/echo/v4"
 	"github.com/souvikmndl/search-service/internal/model"
+	"go.uber.org/zap"
 )
 
 const (
@@ -143,4 +145,21 @@ func parseClaims(tokenString string, jwtSecret string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+func Latency(logger *zap.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			logger.Info("request",
+				zap.String("method", c.Request().Method),
+				zap.String("path", c.Request().URL.Path),
+				zap.Int("status", c.Response().Status),
+				zap.Duration("latency", time.Since(start)),
+				zap.String("request_id", c.Response().Header().Get(echo.HeaderXRequestID)),
+			)
+			return err
+		}
+	}
 }

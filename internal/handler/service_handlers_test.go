@@ -35,6 +35,32 @@ func TestCreateServiceSetsCreatedBy(t *testing.T) {
 	}
 }
 
+func TestCreateService(t *testing.T) {
+	var captured model.CreateServiceRequest
+	db := &mockSearchDB{
+		createServiceFunc: func(ctx context.Context, req model.CreateServiceRequest) (*model.Service, error) {
+			captured = req
+			svc := testService(12)
+			svc.CreatedBy = req.CreatedBy
+			svc.UpdatedBy = req.CreatedBy
+			return svc, nil
+		},
+	}
+
+	h := newTestHandler(db)
+	c, rec := newTestContext(http.MethodPost, "/services", `{"name":"svc","description":"desc","version":{"version_string":"v1.0.0","status":"stable"}}`)
+	setAuthClaims(c, 7, "user@example.com")
+	err := h.CreateService(c)
+	if err != nil {
+		t.Fatalf("create service returned error: %v", err)
+	}
+
+	assertStatus(t, rec, http.StatusCreated)
+	if captured.CreatedBy != 7 {
+		t.Fatalf("expected created_by 7, got %d", captured.CreatedBy)
+	}
+}
+
 func TestCreateServiceRejectsInvalidPayloadAndMissingClaims(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -434,9 +460,12 @@ func TestUpdateServiceByIDHandlesErrors(t *testing.T) {
 
 func TestDeleteServiceByID(t *testing.T) {
 	db := &mockSearchDB{
-		deleteServiceByIDFunc: func(ctx context.Context, id int64) error {
+		deleteServiceByIDFunc: func(ctx context.Context, id int64, changedBy int64) error {
 			if id != 10 {
 				t.Fatalf("expected id 10, got %d", id)
+			}
+			if changedBy != 7 {
+				t.Fatalf("expected changedBy 7, got %d", changedBy)
 			}
 			return nil
 		},
@@ -444,6 +473,7 @@ func TestDeleteServiceByID(t *testing.T) {
 	h := newTestHandler(db)
 	c, rec := newTestContext(http.MethodDelete, "/services/10", "")
 	setPath(c, "/services/:id", []string{"id"}, []string{"10"})
+	setAuthClaims(c, 7, "user@example.com")
 
 	if err := h.DeleteServiceByID(c); err != nil {
 		t.Fatalf("delete service returned error: %v", err)
@@ -466,13 +496,14 @@ func TestDeleteServiceByIDHandlesErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db := &mockSearchDB{
-				deleteServiceByIDFunc: func(ctx context.Context, id int64) error {
+				deleteServiceByIDFunc: func(ctx context.Context, id int64, changedBy int64) error {
 					return tt.err
 				},
 			}
 			h := newTestHandler(db)
 			c, rec := newTestContext(http.MethodDelete, "/services/"+tt.id, "")
 			setPath(c, "/services/:id", []string{"id"}, []string{tt.id})
+			setAuthClaims(c, 7, "user@example.com")
 
 			if err := h.DeleteServiceByID(c); err != nil {
 				t.Fatalf("delete service returned error: %v", err)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -22,6 +23,7 @@ type ServiceHandler struct {
 	SearchDB  postgres.SearchDB
 	Logger    *zap.Logger
 	JWTSecret string
+	sqlDB     *sql.DB
 }
 
 // RegisterRoutes connects the routes to the handler funcs
@@ -38,14 +40,18 @@ func (h *ServiceHandler) RegisterRoutes(e *echo.Echo) {
 		UserStore:  h.SearchDB,
 		CookieName: sessionCookieName,
 	}
-	services := e.Group("/services", authConfig.RequireAuthWithConfig())
+	services := e.Group("/services", authConfig.RequireAuthWithConfig(), authmw.Latency(h.Logger))
 	services.POST("", h.CreateService)
 	services.GET("", h.Search)
 	services.GET("/:id", h.GetServiceByID)
 	services.POST("/:id/versions", h.CreateServiceVersion)
-	services.GET("/:id/versions", h.GetServiceVersions)
+	//services.GET("/:id/versions", h.GetServiceVersions)
 	services.PUT("/:id", h.UpdateServiceByID)
 	services.DELETE("/:id", h.DeleteServiceByID)
+	services.PATCH("/:id", h.PatchService)
+	services.GET("/:id/versions", h.SearchVersions)
+	services.GET("/:id/audit", h.GetServiceAuditLog)
+	services.GET("/health", h.HealthCheck)
 }
 
 // NewServiceHandler is constructor for ServiceHandler
@@ -75,6 +81,7 @@ func InitService(config *config.Config) (*echo.Echo, *sql.DB) {
 	serviceHandler := NewServiceHandler(dbConn, logger, config.Auth.JWTSecret)
 	e := echo.New()
 	serviceHandler.RegisterRoutes(e)
+	serviceHandler.sqlDB = sqlDB
 
 	return e, sqlDB
 }
@@ -97,4 +104,18 @@ func createRateLimiterConfig() echomw.RateLimiterConfig {
 			return context.JSON(http.StatusTooManyRequests, map[string]string{"error": "too many requests"})
 		},
 	}
+}
+
+func (h *ServiceHandler) HealthCheck(c echo.Context) error {
+	ctx, cancel := context.WithCancel(c.Request().Context())
+	defer cancel()
+
+	err := h.sqlDB.PingContext(ctx)
+	if err != nil {
+		return c.JSON(http.StatusServiceUnavailable, envelope{
+			"status": "unhealthy", "db": "unreachable",
+		})
+	}
+
+	return c.JSON(http.StatusOK, envelope{"status": "healthy", "db": "connected"})
 }

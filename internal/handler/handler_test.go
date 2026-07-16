@@ -25,7 +25,9 @@ type mockSearchDB struct {
 	createServiceVersionFunc func(ctx context.Context, serviceID int64, version model.CreateVersionRequest) (*model.Version, error)
 	getServiceVersionsFunc   func(ctx context.Context, serviceID int64) ([]model.Version, error)
 	updateServiceFunc        func(ctx context.Context, service *model.Service) error
-	deleteServiceByIDFunc    func(ctx context.Context, id int64) error
+	deleteServiceByIDFunc    func(ctx context.Context, id int64, changedBy int64) error
+	searchVersionsFunc       func(ctx context.Context, svcID int64, params model.VersionSearchParams) ([]model.Version, int64, error)
+	getAuditLogFunc          func(ctx context.Context, serviceID int64) ([]model.AuditEntry, error)
 }
 
 func (m *mockSearchDB) CreateUser(ctx context.Context, user *model.User) error {
@@ -64,8 +66,16 @@ func (m *mockSearchDB) UpdateService(ctx context.Context, service *model.Service
 	return m.updateServiceFunc(ctx, service)
 }
 
-func (m *mockSearchDB) DeleteServiceByID(ctx context.Context, id int64) error {
-	return m.deleteServiceByIDFunc(ctx, id)
+func (m *mockSearchDB) DeleteServiceByID(ctx context.Context, id int64, changedBy int64) error {
+	return m.deleteServiceByIDFunc(ctx, id, changedBy)
+}
+
+func (m *mockSearchDB) GetAuditLog(ctx context.Context, serviceID int64) ([]model.AuditEntry, error) {
+	return m.getAuditLogFunc(ctx, serviceID)
+}
+
+func (m *mockSearchDB) SearchVersions(ctx context.Context, svcID int64, params model.VersionSearchParams) ([]model.Version, int64, error) {
+	return m.searchVersionsFunc(ctx, svcID, params)
 }
 
 func newTestHandler(db *mockSearchDB) *ServiceHandler {

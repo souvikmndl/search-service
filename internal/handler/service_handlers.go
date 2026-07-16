@@ -248,6 +248,7 @@ func (h *ServiceHandler) UpdateServiceByID(c echo.Context) error {
 
 	svc.Name = req.Name
 	svc.Description = req.Description
+	svc.Tags = req.Tags
 	userID, err := authenticatedUserID(c)
 	if err != nil {
 		logger.Errorf("unable to get authenticated user id %v", err)
@@ -279,7 +280,13 @@ func (h *ServiceHandler) DeleteServiceByID(c echo.Context) error {
 
 	logger.Infof("Service ID %d", id)
 
-	err = h.SearchDB.DeleteServiceByID(c.Request().Context(), int64(id))
+	userID, err := authenticatedUserID(c)
+	if err != nil {
+		logger.Errorf("unable to get authenticated user id %v", err)
+		return h.serverErrorResponse(c)
+	}
+
+	err = h.SearchDB.DeleteServiceByID(c.Request().Context(), int64(id), userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			logger.Errorf("service with given id does not exist id: %d error %v", id, err)
@@ -299,4 +306,144 @@ func authenticatedUserID(c echo.Context) (int64, error) {
 	}
 
 	return claims.UserID, nil
+}
+
+func (h *ServiceHandler) PatchService(c echo.Context) error {
+	logger := LoggerWithFields(h.Logger, c)
+	logger.Info("Patch Service API")
+
+	svcID := c.Param("id")
+	id, err := strconv.ParseInt(svcID, 10, 64)
+	if err != nil {
+		logger.Errorf("invalid service id %+v", err)
+		return h.invalidIDErrResponse(c)
+	}
+
+	svc, err := h.SearchDB.GetServiceByID(c.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			logger.Errorf("service with given id does doesnot exist, id: %d, error: %+v", id, err)
+			return h.notFoundErrResponse(c)
+		}
+		logger.Errorf("unable to fetch serivice with id: %d, error: %+v", id, err)
+		return h.serverErrorResponse(c)
+	}
+
+	var req model.PatchServiceRequest
+	err = c.Bind(&req)
+	if err != nil {
+		logger.Errorf("unable to bind request body %+v", err)
+		return h.badRequestErrorResponse(c)
+	}
+
+	if req.Name != nil {
+		if len(*req.Name) < 3 || len(*req.Name) > 40 {
+			logger.Error("invalid length of name")
+			return h.validationErrorResponse(c, []ValidationError{
+				{Field: "name", Message: "name must be between 3 and 40 characters"},
+			})
+		}
+		svc.Name = *req.Name
+	}
+
+	if req.Description != nil {
+		svc.Description = *req.Description
+	}
+
+	userID, err := authenticatedUserID(c)
+	if err != nil {
+		logger.Errorf("unable to get authenticated user id %v", err)
+		return h.serverErrorResponse(c)
+	}
+
+	svc.UpdatedBy = userID
+
+	err = h.SearchDB.UpdateService(c.Request().Context(), svc)
+	if err != nil {
+		logger.Errorf("error updating service in db %+v", err)
+		return h.serverErrorResponse(c)
+	}
+
+	return c.JSON(http.StatusOK, envelope{"data": svc})
+}
+
+// GetServiceAuditLog returns the audit history for a service.
+func (h *ServiceHandler) GetServiceAuditLog(c echo.Context) error {
+	logger := LoggerWithFields(h.Logger, c)
+
+	svcID := c.Param("id")
+	id, err := strconv.ParseInt(svcID, 10, 64)
+	if err != nil {
+		logger.Error("invalid service id")
+		return h.invalidIDErrResponse(c)
+	}
+
+	entries, err := h.SearchDB.GetAuditLog(c.Request().Context(), id)
+	if err != nil {
+		logger.Errorf("unable to fetch audit log for service %d: %v", id, err)
+		return h.serverErrorResponse(c)
+	}
+
+	resp := make([]model.AuditEntry, 0, len(entries))
+	resp = append(resp, entries...)
+
+	return c.JSON(http.StatusOK, envelope{"data": resp})
+}
+
+func (h *ServiceHandler) SearchVersions(c echo.Context) error {
+	logger := LoggerWithFields(h.Logger, c)
+	logger.Info("Search Service Versions")
+
+	svcID := c.Param("id")
+	id, err := strconv.ParseInt(svcID, 10, 64)
+	if err != nil {
+		logger.Errorf("error parsing service id %+v", err)
+		return h.invalidIDErrResponse(c)
+	}
+
+	svc, err := h.SearchDB.GetServiceByID(c.Request().Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			logger.Errorf("service with given id: %d does not exist", id)
+			return h.notFoundErrResponse(c)
+		}
+		logger.Errorf("error fetching service by id %+v", err)
+		return h.serverErrorResponse(c)
+	}
+
+	logger.Infof("Service: %+v", svc)
+
+	var req model.VersionSearchParams
+	err = c.Bind(&req)
+	if err != nil {
+		logger.Errorf("invalid request %+v", err)
+		return h.badRequestErrorResponse(c)
+	}
+
+	logger.Infof("search params %+v", req)
+
+	versions, total, err := h.SearchDB.SearchVersions(c.Request().Context(), id, req)
+	if err != nil {
+		logger.Errorf("error searching for versions %+v", err)
+		return h.serverErrorResponse(c)
+	}
+
+	if req.PageSize < 10 || req.PageSize > 20 {
+		req.PageSize = 10
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (int(total) + req.PageSize - 1) / req.PageSize
+	}
+
+	return c.JSON(http.StatusOK, envelope{
+		"data": versions,
+		"meta": model.PaginationMeta{
+			Page:       req.Page,
+			PageSize:   req.PageSize,
+			Total:      total,
+			TotalPages: totalPages,
+		},
+	})
 }
